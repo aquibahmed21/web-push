@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import webpush from 'web-push';
+import { title } from 'process';
 
 
 const app = express();
@@ -58,6 +59,7 @@ app.get('/vapid', (req: Request, res: Response) => {
 app.post('/subscribe', (req: Request, res: Response) => {
   const subscription = req.body;
   subscriptions.push(subscription);
+  webpush.sendNotification(subscription, JSON.stringify({ title: 'Test Notification', body: 'This is a test push notification after subscribe successfully' }));
   res.status(201).json({ message: 'Subscribed successfully' });
 });
 
