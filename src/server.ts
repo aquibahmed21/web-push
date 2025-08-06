@@ -41,7 +41,7 @@ const notificationPayload = JSON.stringify({
 
 const refreshIntervalMinute = 5;
 setInterval(() => {
-  fetch('http://localhost:3000/')
+  fetch('https://web-push-3zaz.onrender.com')
     .then(response => response.text())
     .then(data => console.log('Response:', data))
     .catch(error => console.error('Error:', error));
@@ -88,7 +88,7 @@ app.get('/family', async (req, res) => {
 app.post('/family', async (req, res) => {
   const newFamilyData = req.body;
 
-  if (typeof newFamilyData !== 'object' || newFamilyData === null) {
+  if (typeof newFamilyData !== 'object' || !newFamilyData) {
     return res.status(400).json({ error: 'Invalid JSON data' });
   }
 
@@ -102,5 +102,5 @@ app.post('/family', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Server running at http://${require('os').hostname()}:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
