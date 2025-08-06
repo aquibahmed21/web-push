@@ -2,13 +2,17 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import webpush from 'web-push';
-import { title } from 'process';
+
+import fs from 'fs/promises';
+import path from 'path';
+
+const familyJsonPath = path.join(__dirname, '..', 'family.json');
 
 
 const app = express();
 const port = 3000;
 
-const allowedOrigins = ['https://aquibahmed21.github.io'];
+const allowedOrigins = ['https://aquibahmed21.github.io', 'http://localhost:5173'];
 
 app.use(cors({ origin: allowedOrigins }));
 app.use(bodyParser.json());
@@ -35,7 +39,7 @@ const notificationPayload = JSON.stringify({
   body: 'This is a test push notification sent every 5 minutes.'
 });
 
-const refreshIntervalMinute = 10;
+const refreshIntervalMinute = 5;
 setInterval(() => {
   fetch('http://localhost:3000/')
     .then(response => response.text())
@@ -69,6 +73,34 @@ app.post('/unsubscribe', (req: Request, res: Response) => {
   res.status(200).json({ message: 'Unsubscribed successfully' });
 });
 
+app.get('/family', async (req, res) => {
+  try {
+    const data = await fs.readFile(familyJsonPath, 'utf-8');
+    const json = JSON.parse(data);
+    res.json(json);
+  } catch (error) {
+    console.error('Failed to read family.json:', error);
+    res.status(500).json({ error: 'Failed to read family data' });
+  }
+});
+
+// POST /family - overwrite family.json with request body
+app.post('/family', async (req, res) => {
+  const newFamilyData = req.body;
+
+  if (typeof newFamilyData !== 'object' || newFamilyData === null) {
+    return res.status(400).json({ error: 'Invalid JSON data' });
+  }
+
+  try {
+    await fs.writeFile(familyJsonPath, JSON.stringify(newFamilyData, null, 2), 'utf-8');
+    res.status(200).json({ message: 'family.json updated successfully' });
+  } catch (error) {
+    console.error('Failed to write family.json:', error);
+    res.status(500).json({ error: 'Failed to update family data' });
+  }
+});
+
 app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+  console.log(`Server running at http://${require('os').hostname()}:${port}`);
 });
