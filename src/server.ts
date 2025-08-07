@@ -15,7 +15,9 @@ const port = 3000;
 const allowedOrigins = ['https://aquibahmed21.github.io', 'http://localhost:5173'];
 
 app.use(cors({ origin: allowedOrigins }));
-app.use(bodyParser.json());
+// app.use(bodyParser.json());
+app.use(express.json({ limit: "50mb" })); // Adjust '50mb' as needed for JSON payloads
+app.use(express.urlencoded({ limit: "50mb", extended: true })); // Adjust '50mb' as needed for URL-encoded payload
 
 // const vapidKeys = webpush.generateVAPIDKeys();
 // console.log({vapidKeys})
@@ -34,12 +36,15 @@ webpush.setVapidDetails(
   vapidKeys.privateKey
 );
 
+const refreshIntervalMinute = 10;
+
 const notificationPayload = JSON.stringify({
   title: 'Test Notification',
-  body: 'This is a test push notification sent every 5 minutes.'
+  body: 'This is a test push notification sent every ' + refreshIntervalMinute + ' minutes.',
+  icon: 'https://picsum.photos/128',
+  badge: 'https://picsum.photos/48'
 });
 
-const refreshIntervalMinute = 5;
 setInterval(() => {
   fetch('https://web-push-3zaz.onrender.com')
     .then(response => response.text())
