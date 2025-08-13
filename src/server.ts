@@ -6,7 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 const familyJsonPath = path.join(__dirname, '..', 'family.json');
-
+const subscriptionJsonPath = path.join(__dirname, '..', 'notifications.json');
 
 const app = express();
 const port = 3000;
@@ -17,28 +17,30 @@ app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: "1mb" })); // Adjust '1mb' as needed for JSON payloads
 app.use(express.urlencoded({ limit: "1mb", extended: true })); // Adjust '1mb' as needed for URL-encoded payload
 
-// const vapidKeys = webpush.generateVAPIDKeys();
-// console.log({vapidKeys})
+interface SubscriptionData
+{
+  vapidKeys: { publicKey: string; privateKey: string; };
+  subscriptionList: any[]; // shape as per your app or just keep any[]
+}
 
-const vapidKeys = {
-  publicKey: 'BJIcXbDabu76tGH1pafdWnTuHU0-2fqwnwT0-5xUys28ORm66D7vjekpvHGn8yGy_yo5ttPLnKDBL-0FYpq__JE',
-  privateKey: 'U0O4rAXZN9ChWEDU3Lr0eDHBKVQnpAHl96dJN77HMTk'
-};
+let subscriptionData: SubscriptionData | null = null;
+LoadOrCreateSubscriptionFile().then((data: SubscriptionData) => {
 
-// Store subscriptions in-memory (use DB for production)
-const subscriptions: any[] = [];
+  subscriptionData = data;
+  const {vapidKeys, subscriptionList} = data;
 
-webpush.setVapidDetails(
-  'mailto:your@email.com',
-  vapidKeys.publicKey,
-  vapidKeys.privateKey
-);
+  webpush.setVapidDetails(
+    'mailto:your@email.com',
+    vapidKeys.publicKey,
+    vapidKeys.privateKey
+  );
+});
 
 const refreshIntervalMinute = 10;
 
-const notificationPayload = JSON.stringify({
-  title: 'Test Notification',
-  body: 'This is a test push notification sent every ' + refreshIntervalMinute + ' minutes.',
+const notificationPayload = (id: number) => JSON.stringify({
+  title: 'Test Notification ' + id,
+  body: 'This is a test push notification sent every ' + id + ' minutes.',
   icon: 'https://picsum.photos/128',
   badge: 'https://picsum.photos/48'
 });
@@ -49,7 +51,9 @@ setInterval(() => {
     .then(data => console.log('Response:', data))
     .catch(error => console.error('Error:', error));
 
-  subscriptions.forEach(subscription => webpush.sendNotification(subscription, notificationPayload));
+  subscriptionData?.subscriptionList.forEach(subscription => {
+    webpush.sendNotification(subscription, notificationPayload(subscription.keys.id));
+  });
 }, refreshIntervalMinute * 60 * 1000);
 
 
@@ -59,20 +63,27 @@ app.get('/', (req: Request, res: Response) => {
 
 app.get('/vapid', (req: Request, res: Response) => {
   res.status(200).json({
-    publicKey: vapidKeys.publicKey
+    publicKey: subscriptionData?.vapidKeys.publicKey
   });
 });
 
 app.post('/subscribe', (req: Request, res: Response) => {
   const subscription = req.body;
-  subscriptions.push(subscription);
-  webpush.sendNotification(subscription, JSON.stringify({ title: 'Test Notification', body: 'This is a test push notification after subscribe successfully' }));
-  res.status(201).json({ message: 'Subscribed successfully' });
+  subscriptionData?.subscriptionList.push(subscription);
+  try {
+    fs.writeFile(subscriptionJsonPath, JSON.stringify(subscriptionData, null, 2), 'utf-8').then(() => {
+      res.status(200).json({ message: 'subscription.json updated successfully' });
+    });
+  } catch (error) {
+    console.error('Failed to write family.json:', error);
+    res.status(500).json({ error: 'Failed to update family data' });
+  }
 });
 
 app.post('/unsubscribe', (req: Request, res: Response) => {
   const subscription = req.body;
-  subscriptions.splice(subscriptions.indexOf(subscription), 1);
+
+  subscriptionData?.subscriptionList.splice(subscriptionData?.subscriptionList.indexOf(subscription), 1);
   res.status(200).json({ message: 'Unsubscribed successfully' });
 });
 
@@ -107,3 +118,32 @@ app.post('/family', async (req, res) => {
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
 });
+
+async function LoadOrCreateSubscriptionFile():
+  Promise<SubscriptionData> {
+  try {
+    const fileData = await fs.readFile(subscriptionJsonPath, 'utf-8');
+    const parsedData = JSON.parse(fileData);
+    return parsedData;
+  }
+  catch (error: any) {
+    if (error.code === 'ENOENT') {
+      return await HandleENOENT();
+    } else {
+      // Unknown error - rethrow or handle accordingly
+      throw error;
+    }
+  }
+}
+async function HandleENOENT() {
+  const vapidKeys = webpush.generateVAPIDKeys();
+  const defaultSubscriptionData: SubscriptionData = {
+    vapidKeys: vapidKeys,
+    subscriptionList: []
+  };
+  console.log("defaultSubscriptionData: ", defaultSubscriptionData);
+  // File does not exist, create with default JSON
+  await fs.writeFile(subscriptionJsonPath, JSON.stringify(defaultSubscriptionData, null, 2), 'utf-8');
+  return defaultSubscriptionData;
+}
+
