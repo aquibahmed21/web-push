@@ -1,6 +1,5 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import bodyParser from 'body-parser';
 import webpush from 'web-push';
 
 import fs from 'fs/promises';
@@ -15,9 +14,8 @@ const port = 3000;
 const allowedOrigins = ['https://aquibahmed21.github.io', 'http://localhost:5173'];
 
 app.use(cors({ origin: allowedOrigins }));
-// app.use(bodyParser.json());
-app.use(express.json({ limit: "50mb" })); // Adjust '50mb' as needed for JSON payloads
-app.use(express.urlencoded({ limit: "50mb", extended: true })); // Adjust '50mb' as needed for URL-encoded payload
+app.use(express.json({ limit: "1mb" })); // Adjust '1mb' as needed for JSON payloads
+app.use(express.urlencoded({ limit: "1mb", extended: true })); // Adjust '1mb' as needed for URL-encoded payload
 
 // const vapidKeys = webpush.generateVAPIDKeys();
 // console.log({vapidKeys})
