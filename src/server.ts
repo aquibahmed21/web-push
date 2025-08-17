@@ -38,9 +38,9 @@ LoadOrCreateSubscriptionFile().then((data: SubscriptionData) => {
 
 const refreshIntervalMinute = 10;
 
-const notificationPayload = (id: number) => JSON.stringify({
-  title: 'Test Notification ' + id,
-  body: 'This is a test push notification sent every ' + id + ' minutes.',
+const notificationPayload = (title: string, body: string) => JSON.stringify({
+  title,
+  body,
   icon: 'https://picsum.photos/128',
   badge: 'https://picsum.photos/48'
 });
@@ -51,9 +51,9 @@ setInterval(() => {
     .then(data => console.log('Response:', data))
     .catch(error => console.error('Error:', error));
 
-  subscriptionData?.subscriptionList.forEach(subscription => {
-    webpush.sendNotification(subscription, notificationPayload(subscription.keys.id));
-  });
+  // subscriptionData?.subscriptionList.forEach(subscription => {
+  //   webpush.sendNotification(subscription, notificationPayload(subscription.keys.id));
+  // });
 }, refreshIntervalMinute * 60 * 1000);
 
 
@@ -86,6 +86,31 @@ app.post('/unsubscribe', (req: Request, res: Response) => {
   subscriptionData?.subscriptionList.splice(subscriptionData?.subscriptionList.indexOf(subscription), 1);
   res.status(200).json({ message: 'Unsubscribed successfully' });
 });
+
+app.post('/notifyAll', (req: Request, res: Response) => {
+  const data:{ initiator: number; title: string; body: string } = req.body;
+  const {initiator, title, body} = data;
+
+  console.log({initiator, title, body});
+
+  subscriptionData?.subscriptionList.forEach(subscription => {
+    if (subscription.keys.id !== initiator) {
+      console.log("Sending notification to: ", subscription.keys.id);
+      webpush.sendNotification(subscription, notificationPayload(title, body));
+    }
+  });
+
+  res.status(200).json({ message: 'Notification sent successfully' });
+});
+
+app.post("/isPushSubscribed", (req: Request, res: Response) => {
+  const subscription = req.body;
+  console.log(subscription);
+
+  const isSubscribed = subscriptionData?.subscriptionList.some(sub => sub.endpoint === subscription.endpoint);
+  res.status(200).json({ isSubscribed });
+})
+
 
 app.get('/family', async (req, res) => {
   try {
