@@ -35,6 +35,8 @@ interface PushSubscriptionLike {
   endpoint: string;
   expirationTime?: number | null;
   keys: PushSubscriptionKeys;
+  /** Optional app-level device id (e.g. MeshCall) – enables targeted delivery via POST /notify. */
+  deviceId?: string;
 }
 interface SubscriptionData {
   vapidKeys: { publicKey: string; privateKey: string; };
@@ -46,6 +48,30 @@ let subscriptionData: SubscriptionData | null = null;
 // Helpers
 const asyncHandler = (fn: any) => (req: Request, res: Response, next: NextFunction) => {
   Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+/** Device ids are opaque app identifiers (MeshCall uses UUIDs). */
+const validDeviceId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(v);
+
+/** Send to a set of subscriptions and prune the ones the push service reports as gone. */
+const sendAndPrune = async (targets: PushSubscriptionLike[], payload: string, options?: webpush.RequestOptions) => {
+  const results = await Promise.allSettled(targets.map(sub => webpush.sendNotification(sub as any, payload, options)));
+  let changed = false;
+  results.forEach((r, idx) => {
+    if (r.status === 'rejected') {
+      const err: any = r.reason;
+      if (err && (err.statusCode === 404 || err.statusCode === 410)) {
+        const stale = targets[idx];
+        subscriptionData!.subscriptionList = subscriptionData!.subscriptionList.filter(s => s.endpoint !== stale.endpoint);
+        changed = true;
+      }
+    }
+  });
+  if (changed) await saveSubscriptionData();
+  return {
+    successes: results.filter(r => r.status === 'fulfilled').length,
+    failures: results.filter(r => r.status === 'rejected').length
+  };
 };
 
 const saveSubscriptionData = async () => {
@@ -102,12 +128,23 @@ app.post('/subscribe', asyncHandler(async (req: Request, res: Response) => {
   }
   if (!subscriptionData) return res.status(503).json({ error: 'Service not initialized' });
 
-  const exists = subscriptionData.subscriptionList.some(s => s.endpoint === subscription.endpoint);
-  if (exists) {
+  const deviceId = validDeviceId(subscription.deviceId) ? subscription.deviceId : undefined;
+  const existing = subscriptionData.subscriptionList.find(s => s.endpoint === subscription.endpoint);
+  if (existing) {
+    // Re-registration may attach (or change) the device id of a known subscription.
+    if (deviceId && existing.deviceId !== deviceId) {
+      existing.deviceId = deviceId;
+      await saveSubscriptionData();
+    }
     return res.status(200).json({ message: 'Already subscribed' });
   }
 
-  subscriptionData.subscriptionList.push(subscription);
+  subscriptionData.subscriptionList.push({
+    endpoint: subscription.endpoint,
+    expirationTime: subscription.expirationTime ?? null,
+    keys: subscription.keys,
+    ...(deviceId ? { deviceId } : {})
+  });
   await saveSubscriptionData();
   res.status(201).json({ message: 'Subscribed successfully' });
 }));
@@ -134,23 +171,32 @@ app.post('/notifyAll', asyncHandler(async (req: Request, res: Response) => {
   const targets = subscriptionData.subscriptionList.filter(s => (s.keys?.id ? s.keys.id !== initiator : true));
   const payload = notificationPayload(title, body);
 
-  const results = await Promise.allSettled(targets.map(sub => webpush.sendNotification(sub as any, payload)));
+  const { successes, failures } = await sendAndPrune(targets, payload);
 
-  // Optionally prune stale subscriptions (410 Gone)
-  let changed = false;
-  results.forEach((r, idx) => {
-    if (r.status === 'rejected') {
-      const err: any = r.reason;
-      if (err && (err.statusCode === 404 || err.statusCode === 410)) {
-        const stale = targets[idx];
-        subscriptionData!.subscriptionList = subscriptionData!.subscriptionList.filter(s => s.endpoint !== stale.endpoint);
-        changed = true;
-      }
-    }
-  });
-  if (changed) await saveSubscriptionData();
+  res.status(200).json({ message: 'Notifications processed', successes, failures });
+}));
 
-  res.status(200).json({ message: 'Notifications processed', successes: results.filter(r => r.status === 'fulfilled').length, failures: results.filter(r => r.status === 'rejected').length });
+/**
+ * Targeted delivery: push ONLY to the subscriptions registered for one device id.
+ * Body: { targetDeviceId, title, body, data?, ttl? }
+ * The payload is { title, body, data } – `data` is passed through unchanged for the app's
+ * service worker (e.g. MeshCall incoming-call / chat-message payloads).
+ */
+app.post('/notify', asyncHandler(async (req: Request, res: Response) => {
+  if (!subscriptionData) return res.status(503).json({ error: 'Service not initialized' });
+  const { targetDeviceId, title, body, data, ttl } = req.body || {};
+  if (!validDeviceId(targetDeviceId)) return res.status(400).json({ error: 'valid targetDeviceId required' });
+  if (typeof title !== 'string' || !title || typeof body !== 'string') return res.status(400).json({ error: 'title and body are required' });
+
+  const payload = JSON.stringify({ title: title.slice(0, 200), body: body.slice(0, 500), data: data ?? null });
+  if (Buffer.byteLength(payload) > 3000) return res.status(413).json({ error: 'payload too large' });
+
+  const targets = subscriptionData.subscriptionList.filter(s => s.deviceId === targetDeviceId);
+  if (!targets.length) return res.status(404).json({ error: 'No push subscription for this device' });
+
+  const seconds = Number.isFinite(ttl) ? Math.min(Math.max(Math.round(ttl), 0), 86400) : 60;
+  const result = await sendAndPrune(targets, payload, { TTL: seconds, urgency: 'high' });
+  res.status(result.successes ? 200 : 502).json({ message: result.successes ? 'Notification accepted' : 'Push service rejected the notification', ...result });
 }));
 
 app.post('/isPushSubscribed', (req: Request, res: Response) => {
